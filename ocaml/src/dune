@@ -1,0 +1,11 @@
+(library
+ (name toy)
+ (modules tokens ast lexer parser codegen)
+)
+
+(executable
+ (name main)
+ (public_name toyc)
+ (modules main)
+ (libraries toy)
+)

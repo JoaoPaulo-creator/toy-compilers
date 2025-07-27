@@ -1,0 +1,30 @@
+let numbers = [1, 2, 3, 4, 5];
+print numbers.length; 
+
+let third = numbers[2];
+print third;
+
+let sum = third + numbers[4];
+let isBig = sum > 7;
+print isBig;
+
+let notBig = !isBig;
+print notBig;                    
+
+if (sum == 8) {
+    print sum;                  
+} else {
+    print 0;
+}
+
+let i = 0;
+while (i < numbers.length) {
+    print numbers[i];
+    i = i + 1;
+}
+
+for (let j = 0; j < 3; j = j + 1) {
+    print j;
+}
+
+print(numbers.length);
