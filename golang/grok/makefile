@@ -9,8 +9,9 @@ build:
 run: build
 	./toycompiler test.toy
 	nasm -f elf64 output.asm -o test.o
-	ld test.o -o test
-	./test
+	# ld test.o -o test
+	gcc -o run -no-pie test.o
+	./run
 
 # Test the compiler components
 test:

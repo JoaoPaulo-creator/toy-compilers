@@ -1,2 +1,4 @@
 toycompiler
 *.asm
+run
+*.o

@@ -174,8 +174,10 @@ func (cg *CodeGen) genAssign(assign *frontend.ASTNode) error {
 		}
 		cg.output.WriteString("mov rbx, rax\n")
 		cg.output.WriteString("pop rax\n")
-		arrOffset := cg.symbols[arr.Value.(string)]
-		cg.output.WriteString(fmt.Sprintf("mov [%s+rax*8], rbx\n", arrOffset))
+		arrOffsetStr := cg.symbols[arr.Value.(string)]
+		var offset int
+		fmt.Sscanf(arrOffsetStr, "[rbp%d]", &offset)
+		cg.output.WriteString(fmt.Sprintf("mov [rbp%d+rax*8], rbx\n", offset))
 	} else {
 		// Variable assignment
 		if err := cg.genExpr(expr); err != nil {
@@ -300,6 +302,10 @@ func (cg *CodeGen) genPrintStmt(printStmt *frontend.ASTNode) error {
 		return err
 	}
 
+	// Ensure 16-byte stack alignment before printf call
+	cg.output.WriteString("sub rsp, 8\n") // Align stack
+	cg.output.WriteString("mov rsi, rax\n")
+
 	// Determine format based on expression type
 	switch expr.Type {
 	case frontend.NodeLiteral:
@@ -312,9 +318,9 @@ func (cg *CodeGen) genPrintStmt(printStmt *frontend.ASTNode) error {
 	default:
 		cg.output.WriteString("lea rdi, [rel fmt_int]\n")
 	}
-	cg.output.WriteString("mov rsi, rax\n")
 	cg.output.WriteString("xor rax, rax\n")
 	cg.output.WriteString("call printf\n")
+	cg.output.WriteString("add rsp, 8\n") // Restore stack
 	return nil
 }
 
@@ -352,12 +358,16 @@ func (cg *CodeGen) genExpr(expr *frontend.ASTNode) error {
 			return err
 		}
 		cg.output.WriteString("mov rbx, rax\n")
-		arrOffset := cg.symbols[arr.Value.(string)]
-		cg.output.WriteString(fmt.Sprintf("mov rax, [%s+rbx*8]\n", arrOffset))
+		arrOffsetStr := cg.symbols[arr.Value.(string)]
+		var offset int
+		fmt.Sscanf(arrOffsetStr, "[rbp%d]", &offset)
+		cg.output.WriteString(fmt.Sprintf("mov rax, [rbp%d+rbx*8]\n", offset))
 	case frontend.NodeArrayLength:
 		arr := expr.Children[0]
-		arrOffset := cg.symbols[arr.Value.(string)]
-		cg.output.WriteString(fmt.Sprintf("mov rax, [%s-8]\n", arrOffset))
+		arrOffsetStr := cg.symbols[arr.Value.(string)]
+		var offset int
+		fmt.Sscanf(arrOffsetStr, "[rbp%d]", &offset)
+		cg.output.WriteString(fmt.Sprintf("mov rax, [rbp%d-8]\n", offset))
 	case frontend.NodeArrayLiteral:
 		return fmt.Errorf("array literal not expected in expression context")
 	default:
