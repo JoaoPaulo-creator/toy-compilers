@@ -57,7 +57,7 @@ func (cg *CodeGen) genFunction(fn *frontend.ASTNode) error {
 	// Allocate space for parameters
 	paramCount := len(fn.Children) - 1 // Last child is body
 	cg.spOffset = 0
-	for i := 0; i < paramCount; i++ {
+	for i := range paramCount {
 		param := fn.Children[i]
 		varName := param.Value.(string)
 		cg.spOffset -= 8
@@ -129,20 +129,24 @@ func (cg *CodeGen) genVarDecl(decl *frontend.ASTNode) error {
 	if len(decl.Children) > 1 {
 		// Has initializer
 		expr := decl.Children[1]
-		if err := cg.genExpr(expr); err != nil {
-			return err
-		}
-		cg.output.WriteString(fmt.Sprintf("mov %s, rax\n", cg.symbols[varName]))
-	}
-
-	if len(decl.Children) > 2 && decl.Children[1].Token.Type == frontend.TokenInt {
-		// Array declaration
-		arrayLit := decl.Children[2]
-		for i, elem := range arrayLit.Children {
-			if err := cg.genExpr(elem); err != nil {
+		if expr.Type == frontend.NodeArrayLiteral {
+			// Array declaration with literal
+			arrayLit := expr
+			// Store array length at [rbp+offset-8]
+			cg.output.WriteString(fmt.Sprintf("mov rax, %d\n", len(arrayLit.Children)))
+			cg.output.WriteString(fmt.Sprintf("mov [rbp%d-8], rax\n", cg.spOffset))
+			for i, elem := range arrayLit.Children {
+				if err := cg.genExpr(elem); err != nil {
+					return err
+				}
+				cg.output.WriteString(fmt.Sprintf("mov [rbp%d+%d], rax\n", cg.spOffset, i*8))
+			}
+		} else {
+			// Scalar initializer
+			if err := cg.genExpr(expr); err != nil {
 				return err
 			}
-			cg.output.WriteString(fmt.Sprintf("mov [rbp%d+%d], rax\n", cg.spOffset, i*8))
+			cg.output.WriteString(fmt.Sprintf("mov %s, rax\n", cg.symbols[varName]))
 		}
 	}
 
@@ -288,9 +292,15 @@ func (cg *CodeGen) genPrintStmt(printStmt *frontend.ASTNode) error {
 	}
 
 	// Determine format based on expression type
-	if expr.Type == frontend.NodeLiteral && expr.Value.(type) == string {
-		cg.output.WriteString("lea rdi, [rel fmt_str]\n")
-	} else {
+	switch expr.Type {
+	case frontend.NodeLiteral:
+		switch expr.Value.(type) {
+		case string:
+			cg.output.WriteString("lea rdi, [rel fmt_str]\n")
+		default:
+			cg.output.WriteString("lea rdi, [rel fmt_int]\n")
+		}
+	default:
 		cg.output.WriteString("lea rdi, [rel fmt_int]\n")
 	}
 	cg.output.WriteString("mov rsi, rax\n")
@@ -317,6 +327,8 @@ func (cg *CodeGen) genExpr(expr *frontend.ASTNode) error {
 			strLabel := cg.newLabel()
 			cg.output.WriteString(fmt.Sprintf("section .data\n%s: db \"%s\", 0\nsection .text\n", strLabel, v))
 			cg.output.WriteString(fmt.Sprintf("lea rax, [rel %s]\n", strLabel))
+		default:
+			return fmt.Errorf("unknown literal type: %T", v)
 		}
 	case frontend.NodeIdentifier:
 		cg.output.WriteString(fmt.Sprintf("mov rax, %s\n", cg.symbols[expr.Value.(string)]))
@@ -338,6 +350,9 @@ func (cg *CodeGen) genExpr(expr *frontend.ASTNode) error {
 		// For simplicity, assume length is stored at array base -8
 		arrOffset := cg.symbols[arr.Value.(string)]
 		cg.output.WriteString(fmt.Sprintf("mov rax, [%s-8]\n", arrOffset))
+	case frontend.NodeArrayLiteral:
+		// Array literals are handled in genVarDecl, so return the base address
+		return fmt.Errorf("array literal not expected in expression context")
 	default:
 		return fmt.Errorf("unknown expression type: %s", expr.Type)
 	}

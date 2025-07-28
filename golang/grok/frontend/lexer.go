@@ -47,7 +47,8 @@ const (
 	TokenTrue
 	TokenFalse
 
-	// EOF
+	// Special tokens
+	TokenInvalid // Added TokenInvalid
 	TokenEOF
 )
 

@@ -74,7 +74,18 @@ func (p *Parser) parseFunction() (*ASTNode, error) {
 	var params []*ASTNode
 	if p.peek().Type != TokenRParen {
 		for {
-			paramType := p.parseType()
+			var paramType *ASTNode
+			// Check if the next token is a type; if not, assume 'int'
+			if p.peek().Type == TokenInt || p.peek().Type == TokenBool {
+				paramType = p.parseType()
+			} else {
+				// Default to int type
+				paramType = &ASTNode{
+					Type:  NodeLiteral,
+					Value: "int",
+					Token: Token{Type: TokenInt, Literal: "int"},
+				}
+			}
 			paramName := p.consume(TokenIdentifier, "expect parameter name")
 			params = append(params, &ASTNode{
 				Type:     NodeVarDecl,
@@ -273,9 +284,31 @@ func (p *Parser) parseForStmt() (*ASTNode, error) {
 	var update *ASTNode
 	if p.peek().Type != TokenRParen {
 		var err error
-		update, err = p.parseAssign()
+		// Parse update expression without expecting a semicolon
+		ident := p.consume(TokenIdentifier, "expect identifier")
+		var target *ASTNode
+		if p.peek().Type == TokenLBracket {
+			p.consume(TokenLBracket, "expect '['")
+			index, err := p.parseExpr()
+			if err != nil {
+				return nil, err
+			}
+			p.consume(TokenRBracket, "expect ']'")
+			target = &ASTNode{
+				Type:     NodeArrayAccess,
+				Children: []*ASTNode{{Type: NodeIdentifier, Value: ident.Literal, Token: ident}, index},
+			}
+		} else {
+			target = &ASTNode{Type: NodeIdentifier, Value: ident.Literal, Token: ident}
+		}
+		p.consume(TokenEqual, "expect '='")
+		expr, err := p.parseExpr()
 		if err != nil {
 			return nil, err
+		}
+		update = &ASTNode{
+			Type:     NodeAssign,
+			Children: []*ASTNode{target, expr},
 		}
 	}
 	p.consume(TokenRParen, "expect ')'")
