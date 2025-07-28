@@ -25,13 +25,16 @@ func NewCodeGen(ast *frontend.ASTNode) *CodeGen {
 
 // Generate produces x86_64 assembly code
 func (cg *CodeGen) Generate() (string, error) {
-	// Initialize assembly with necessary directives
-	cg.output.WriteString("section .text\n")
-	cg.output.WriteString("extern printf\n")
-	cg.output.WriteString("global main\n")
+	// Initialize assembly with data section
 	cg.output.WriteString("section .data\n")
 	cg.output.WriteString("fmt_int: db \"%d\", 10, 0\n")
 	cg.output.WriteString("fmt_str: db \"%s\", 10, 0\n")
+	// Define non-executable stack section
+	cg.output.WriteString("section .note.GNU-stack noalloc noexec nowrite progbits\n")
+	// Start text section
+	cg.output.WriteString("section .text\n")
+	cg.output.WriteString("extern printf\n")
+	cg.output.WriteString("global main\n")
 
 	// Generate code for each function
 	for _, fn := range cg.ast.Children {

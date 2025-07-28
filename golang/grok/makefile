@@ -19,7 +19,7 @@ test:
 
 # Clean generated files
 clean:
-	rm -f toycompiler test.s test.o test
+	rm -f toycompiler test.s test.o test output.asm
 
 # Install dependencies (if any)
 deps:
