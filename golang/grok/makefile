@@ -8,7 +8,7 @@ build:
 # Compile and run the test program
 run: build
 	./toycompiler test.toy
-	as --64 test.s -o test.o
+	nasm -f elf64 output.asm -o test.o
 	ld test.o -o test
 	./test
 

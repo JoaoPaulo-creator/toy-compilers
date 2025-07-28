@@ -90,6 +90,9 @@ func (cg *CodeGen) genFunction(fn *frontend.ASTNode) error {
 
 // genStmtList generates code for a statement list
 func (cg *CodeGen) genStmtList(stmtList *frontend.ASTNode) error {
+	if stmtList.Type != frontend.NodeStmtList {
+		return fmt.Errorf("expected statement list node, got %s", stmtList.Type)
+	}
 	for _, stmt := range stmtList.Children {
 		if err := cg.genStmt(stmt); err != nil {
 			return err
@@ -204,8 +207,14 @@ func (cg *CodeGen) genIfStmt(ifStmt *frontend.ASTNode) error {
 	cg.output.WriteString(fmt.Sprintf("%s:\n", elseLabel))
 	if len(ifStmt.Children) > 2 {
 		elseBody := ifStmt.Children[2]
-		if err := cg.genStmtList(elseBody); err != nil {
-			return err
+		if elseBody.Type == frontend.NodeIfStmt {
+			if err := cg.genIfStmt(elseBody); err != nil {
+				return err
+			}
+		} else {
+			if err := cg.genStmtList(elseBody); err != nil {
+				return err
+			}
 		}
 	}
 	cg.output.WriteString(fmt.Sprintf("%s:\n", endLabel))
@@ -347,11 +356,9 @@ func (cg *CodeGen) genExpr(expr *frontend.ASTNode) error {
 		cg.output.WriteString(fmt.Sprintf("mov rax, [%s+rbx*8]\n", arrOffset))
 	case frontend.NodeArrayLength:
 		arr := expr.Children[0]
-		// For simplicity, assume length is stored at array base -8
 		arrOffset := cg.symbols[arr.Value.(string)]
 		cg.output.WriteString(fmt.Sprintf("mov rax, [%s-8]\n", arrOffset))
 	case frontend.NodeArrayLiteral:
-		// Array literals are handled in genVarDecl, so return the base address
 		return fmt.Errorf("array literal not expected in expression context")
 	default:
 		return fmt.Errorf("unknown expression type: %s", expr.Type)
