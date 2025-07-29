@@ -26,6 +26,8 @@ const (
 	NodeArrayAccess  NodeType = "ArrayAccess"
 	NodeArrayLength  NodeType = "ArrayLength"
 	NodeArrayLiteral NodeType = "ArrayLiteral"
+	NodeFuncCall     NodeType = "FuncCall"
+	NodeExprStmt     NodeType = "ExprStmt"
 )
 
 // ASTNode represents a node in the abstract syntax tree
@@ -44,575 +46,508 @@ type Parser struct {
 
 // NewParser creates a new parser
 func NewParser(tokens []Token) *Parser {
-	return &Parser{tokens: tokens}
+	return &Parser{tokens: tokens, current: 0}
 }
 
-// Parse performs syntactic analysis and returns the AST
+// peek returns the current token
+func (p *Parser) peek() Token {
+	if p.current >= len(p.tokens) {
+		return Token{Line: p.currentLine()}
+	}
+	return p.tokens[p.current]
+}
+
+// consume checks and advances to the next token
+func (p *Parser) consume(tType TokenType, value string) error {
+	token := p.peek()
+	if p.current >= len(p.tokens) || (tType != TokenEOF && token.Type != tType) || (value != "" && token.Literal != value) {
+		return fmt.Errorf("expect %s '%s' at line %d, found %s '%s'", tType, value, token.Line, token.Type, token.Literal)
+	}
+	p.current++
+	return nil
+}
+
+// currentLine returns the current line number
+func (p *Parser) currentLine() int {
+	if p.current >= len(p.tokens) {
+		return p.tokens[len(p.tokens)-1].Line
+	}
+	return p.tokens[p.current].Line
+}
+
+// Parse constructs the AST
 func (p *Parser) Parse() (*ASTNode, error) {
-	program := &ASTNode{Type: NodeProgram}
-	for !p.isAtEnd() {
-		if p.peek().Type == TokenFunc {
-			fn, err := p.parseFunction()
-			if err != nil {
-				return nil, err
-			}
-			program.Children = append(program.Children, fn)
+	program := &ASTNode{Type: NodeProgram, Children: []*ASTNode{}}
+	for p.current < len(p.tokens) && p.peek().Type != TokenEOF {
+		node := p.parseFunction()
+		if node != nil {
+			program.Children = append(program.Children, node)
 		} else {
-			return nil, fmt.Errorf("unexpected token at line %d: %s", p.peek().Line, p.peek().Literal)
+			return nil, fmt.Errorf("unexpected token at line %d: %s", p.currentLine(), p.peek().Literal)
 		}
 	}
 	return program, nil
 }
 
 // parseFunction parses a function declaration
-func (p *Parser) parseFunction() (*ASTNode, error) {
-	p.consume(TokenFunc, "expect 'func'")
-	name := p.consume(TokenIdentifier, "expect function name")
-
+func (p *Parser) parseFunction() *ASTNode {
+	if p.peek().Type != TokenFunc {
+		return nil
+	}
+	p.consume(TokenFunc, "func")
+	nameToken := p.peek()
+	if err := p.consume(TokenIdentifier, ""); err != nil {
+		panic(err)
+	}
+	node := &ASTNode{Type: NodeFunction, Value: nameToken.Literal, Token: nameToken}
+	if err := p.consume(TokenLParen, "("); err != nil {
+		panic(err)
+	}
 	// Parse parameters
-	p.consume(TokenLParen, "expect '('")
-	var params []*ASTNode
-	if p.peek().Type != TokenRParen {
-		for {
-			var paramType *ASTNode
-			// Check if the next token is a type; if not, assume 'int'
-			if p.peek().Type == TokenInt || p.peek().Type == TokenBool {
-				paramType = p.parseType()
-			} else {
-				// Default to int type
-				paramType = &ASTNode{
-					Type:  NodeLiteral,
-					Value: "int",
-					Token: Token{Type: TokenInt, Literal: "int"},
-				}
-			}
-			paramName := p.consume(TokenIdentifier, "expect parameter name")
-			params = append(params, &ASTNode{
-				Type:     NodeVarDecl,
-				Value:    paramName.Literal,
-				Children: []*ASTNode{paramType},
-				Token:    paramName,
-			})
-			if p.peek().Type != TokenComma {
-				break
-			}
-			p.consume(TokenComma, "expect ','")
+	for p.peek().Type == TokenInt || p.peek().Type == TokenBool {
+		typeToken := p.peek()
+		if err := p.consume(typeToken.Type, ""); err != nil {
+			panic(err)
+		}
+		paramName := p.peek()
+		if err := p.consume(TokenIdentifier, ""); err != nil {
+			panic(err)
+		}
+		node.Children = append(node.Children, &ASTNode{Type: NodeIdentifier, Value: paramName.Literal, Token: paramName})
+		if p.peek().Literal == "," {
+			p.consume(TokenComma, ",")
 		}
 	}
-	p.consume(TokenRParen, "expect ')'")
-
-	// Parse body
-	p.consume(TokenLBrace, "expect '{'")
-	body, err := p.parseStmtList()
-	if err != nil {
-		return nil, err
+	if err := p.consume(TokenRParen, ")"); err != nil {
+		panic(err)
 	}
-	p.consume(TokenRBrace, "expect '}'")
-
-	return &ASTNode{
-		Type:     NodeFunction,
-		Value:    name.Literal,
-		Children: append(params, body),
-		Token:    name,
-	}, nil
+	if err := p.consume(TokenLBrace, "{"); err != nil {
+		panic(err)
+	}
+	body := p.parseStmtList()
+	node.Children = append(node.Children, body)
+	if err := p.consume(TokenRBrace, "}"); err != nil {
+		panic(err)
+	}
+	return node
 }
 
 // parseStmtList parses a list of statements
-func (p *Parser) parseStmtList() (*ASTNode, error) {
-	stmtList := &ASTNode{Type: NodeStmtList}
-	for p.peek().Type != TokenRBrace && !p.isAtEnd() {
-		stmt, err := p.parseStmt()
-		if err != nil {
-			return nil, err
+func (p *Parser) parseStmtList() *ASTNode {
+	node := &ASTNode{Type: NodeStmtList}
+	for p.peek().Type != TokenRBrace && p.peek().Type != TokenEOF {
+		stmt := p.parseStmt()
+		if stmt != nil {
+			node.Children = append(node.Children, stmt)
+		} else {
+			break
 		}
-		stmtList.Children = append(stmtList.Children, stmt)
 	}
-	return stmtList, nil
+	return node
 }
 
 // parseStmt parses a single statement
-func (p *Parser) parseStmt() (*ASTNode, error) {
-	switch p.peek().Type {
-	case TokenInt, TokenBool:
+func (p *Parser) parseStmt() *ASTNode {
+	if p.peek().Type == TokenInt || p.peek().Type == TokenBool {
 		return p.parseVarDecl()
-	case TokenIf:
+	} else if p.peek().Type == TokenIf {
 		return p.parseIfStmt()
-	case TokenWhile:
+	} else if p.peek().Type == TokenWhile {
 		return p.parseWhileStmt()
-	case TokenFor:
+	} else if p.peek().Type == TokenFor {
 		return p.parseForStmt()
-	case TokenReturn:
+	} else if p.peek().Type == TokenReturn {
 		return p.parseReturnStmt()
-	case TokenPrint:
+	} else if p.peek().Type == TokenPrint {
 		return p.parsePrintStmt()
-	case TokenIdentifier:
-		if p.peekN(1).Type == TokenLBracket || p.peekN(1).Type == TokenEqual {
-			return p.parseAssign()
+	} else if p.peek().Type == TokenIdentifier {
+		ident := p.peek()
+		p.consume(TokenIdentifier, "")
+		if p.peek().Literal == "(" {
+			return p.parseFuncCallStmt(ident)
+		} else if p.peek().Literal == "[" || p.peek().Literal == "=" {
+			return p.parseAssignStmt(ident)
+		} else if p.peek().Type == TokenInc || p.peek().Type == TokenDec {
+			return p.parseIncDecStmt(ident)
+		} else {
+			return p.parseFuncCallStmt(ident) // Handle standalone function calls
 		}
-		return nil, fmt.Errorf("unexpected identifier at line %d: %s", p.peek().Line, p.peek().Literal)
-	default:
-		return nil, fmt.Errorf("unexpected token at line %d: %s", p.peek().Line, p.peek().Literal)
 	}
+	return nil
 }
 
 // parseVarDecl parses a variable declaration
-func (p *Parser) parseVarDecl() (*ASTNode, error) {
-	varType := p.parseType()
-	name := p.consume(TokenIdentifier, "expect variable name")
-	var decl = &ASTNode{
-		Type:     NodeVarDecl,
-		Value:    name.Literal,
-		Children: []*ASTNode{varType},
-		Token:    name,
+func (p *Parser) parseVarDecl() *ASTNode {
+	keyword := p.peek()
+	if err := p.consume(keyword.Type, ""); err != nil {
+		panic(err)
 	}
-
-	if p.peek().Type == TokenEqual {
-		p.consume(TokenEqual, "expect '='")
-		expr, err := p.parseExpr()
-		if err != nil {
-			return nil, err
-		}
-		decl.Children = append(decl.Children, expr)
+	nameToken := p.peek()
+	if err := p.consume(TokenIdentifier, ""); err != nil {
+		panic(err)
 	}
-
-	if p.peek().Type == TokenLBracket && varType.Token.Type == TokenInt {
-		// Array declaration
-		p.consume(TokenLBracket, "expect '['")
-		p.consume(TokenRBracket, "expect ']'")
-		if p.peek().Type == TokenEqual {
-			p.consume(TokenEqual, "expect '='")
-			arrayLit, err := p.parseArrayLiteral()
-			if err != nil {
-				return nil, err
-			}
-			decl.Children = append(decl.Children, arrayLit)
+	node := &ASTNode{Type: NodeVarDecl, Value: nameToken.Literal, Token: nameToken}
+	if p.peek().Literal == "[" {
+		p.consume(TokenLBracket, "[")
+		p.consume(TokenRBracket, "]")
+	}
+	if p.peek().Literal == "=" {
+		p.consume(TokenEqual, "=")
+		if p.peek().Literal == "[" {
+			arrayLit := p.parseArrayLiteral()
+			node.Children = append(node.Children, &ASTNode{Type: NodeIdentifier, Value: nameToken.Literal, Token: nameToken}, arrayLit)
+		} else {
+			expr := p.parseExpr()
+			node.Children = append(node.Children, &ASTNode{Type: NodeIdentifier, Value: nameToken.Literal, Token: nameToken}, expr)
 		}
 	}
+	if err := p.consume(TokenSemicolon, ";"); err != nil {
+		panic(err)
+	}
+	return node
+}
 
-	p.consume(TokenSemicolon, "expect ';'")
-	return decl, nil
+// parseAssignStmt parses an assignment statement
+func (p *Parser) parseAssignStmt(ident Token) *ASTNode {
+	node := &ASTNode{Type: NodeAssign, Token: ident}
+	target := &ASTNode{Type: NodeIdentifier, Value: ident.Literal, Token: ident}
+	if p.peek().Literal == "[" {
+		p.consume(TokenLBracket, "[")
+		index := p.parseExpr()
+		if err := p.consume(TokenRBracket, "]"); err != nil {
+			panic(err)
+		}
+		target = &ASTNode{Type: NodeArrayAccess, Children: []*ASTNode{{Type: NodeIdentifier, Value: ident.Literal, Token: ident}, index}, Token: ident}
+	}
+	if err := p.consume(TokenEqual, "="); err != nil {
+		panic(err)
+	}
+	expr := p.parseExpr()
+	node.Children = append(node.Children, target, expr)
+	if err := p.consume(TokenSemicolon, ";"); err != nil {
+		panic(err)
+	}
+	return node
+}
+
+// parseIncDecStmt parses an increment or decrement statement
+func (p *Parser) parseIncDecStmt(ident Token) *ASTNode {
+	op := p.peek()
+	if err := p.consume(op.Type, op.Literal); err != nil {
+		panic(err)
+	}
+	if err := p.consume(TokenSemicolon, ";"); err != nil {
+		panic(err)
+	}
+	// Convert j++ or j-- to j = j + 1 or j = j - 1
+	opValue := ""
+	if op.Type == TokenInc {
+		opValue = "+"
+	} else {
+		opValue = "-"
+	}
+	one := &ASTNode{Type: NodeLiteral, Value: 1, Token: Token{Type: TokenNumber, Literal: "1"}}
+	rhs := &ASTNode{Type: NodeBinaryExpr, Value: opValue, Children: []*ASTNode{
+		{Type: NodeIdentifier, Value: ident.Literal, Token: ident}, one}, Token: op}
+	return &ASTNode{Type: NodeAssign, Children: []*ASTNode{
+		{Type: NodeIdentifier, Value: ident.Literal, Token: ident}, rhs}, Token: ident}
 }
 
 // parseIfStmt parses an if statement
-func (p *Parser) parseIfStmt() (*ASTNode, error) {
-	p.consume(TokenIf, "expect 'if'")
-	p.consume(TokenLParen, "expect '('")
-	cond, err := p.parseExpr()
-	if err != nil {
-		return nil, err
+func (p *Parser) parseIfStmt() *ASTNode {
+	if err := p.consume(TokenIf, "if"); err != nil {
+		panic(err)
 	}
-	p.consume(TokenRParen, "expect ')'")
-	p.consume(TokenLBrace, "expect '{'")
-	body, err := p.parseStmtList()
-	if err != nil {
-		return nil, err
+	if err := p.consume(TokenLParen, "("); err != nil {
+		panic(err)
 	}
-	p.consume(TokenRBrace, "expect '}'")
-
-	ifNode := &ASTNode{
-		Type:     NodeIfStmt,
-		Children: []*ASTNode{cond, body},
+	cond := p.parseExpr()
+	if err := p.consume(TokenRParen, ")"); err != nil {
+		panic(err)
 	}
-
+	if err := p.consume(TokenLBrace, "{"); err != nil {
+		panic(err)
+	}
+	body := p.parseStmtList()
+	if err := p.consume(TokenRBrace, "}"); err != nil {
+		panic(err)
+	}
+	node := &ASTNode{Type: NodeIfStmt, Children: []*ASTNode{cond, body}}
 	if p.peek().Type == TokenElse {
-		p.consume(TokenElse, "expect 'else'")
+		p.consume(TokenElse, "else")
 		if p.peek().Type == TokenIf {
-			elseIf, err := p.parseIfStmt()
-			if err != nil {
-				return nil, err
-			}
-			ifNode.Children = append(ifNode.Children, elseIf)
+			elseBody := p.parseIfStmt()
+			node.Children = append(node.Children, elseBody)
 		} else {
-			p.consume(TokenLBrace, "expect '{'")
-			elseBody, err := p.parseStmtList()
-			if err != nil {
-				return nil, err
+			if err := p.consume(TokenLBrace, "{"); err != nil {
+				panic(err)
 			}
-			p.consume(TokenRBrace, "expect '}'")
-			ifNode.Children = append(ifNode.Children, elseBody)
+			elseBody := p.parseStmtList()
+			node.Children = append(node.Children, elseBody)
+			if err := p.consume(TokenRBrace, "}"); err != nil {
+				panic(err)
+			}
 		}
 	}
-
-	return ifNode, nil
+	return node
 }
 
 // parseWhileStmt parses a while statement
-func (p *Parser) parseWhileStmt() (*ASTNode, error) {
-	p.consume(TokenWhile, "expect 'while'")
-	p.consume(TokenLParen, "expect '('")
-	cond, err := p.parseExpr()
-	if err != nil {
-		return nil, err
+func (p *Parser) parseWhileStmt() *ASTNode {
+	if err := p.consume(TokenWhile, "while"); err != nil {
+		panic(err)
 	}
-	p.consume(TokenRParen, "expect ')'")
-	p.consume(TokenLBrace, "expect '{'")
-	body, err := p.parseStmtList()
-	if err != nil {
-		return nil, err
+	if err := p.consume(TokenLParen, "("); err != nil {
+		panic(err)
 	}
-	p.consume(TokenRBrace, "expect '}'")
-
-	return &ASTNode{
-		Type:     NodeWhileStmt,
-		Children: []*ASTNode{cond, body},
-	}, nil
+	cond := p.parseExpr()
+	if err := p.consume(TokenRParen, ")"); err != nil {
+		panic(err)
+	}
+	if err := p.consume(TokenLBrace, "{"); err != nil {
+		panic(err)
+	}
+	body := p.parseStmtList()
+	if err := p.consume(TokenRBrace, "}"); err != nil {
+		panic(err)
+	}
+	return &ASTNode{Type: NodeWhileStmt, Children: []*ASTNode{cond, body}}
 }
 
 // parseForStmt parses a for statement
-func (p *Parser) parseForStmt() (*ASTNode, error) {
-	p.consume(TokenFor, "expect 'for'")
-	p.consume(TokenLParen, "expect '('")
-	var init *ASTNode
-	if p.peek().Type != TokenSemicolon {
-		var err error
-		init, err = p.parseVarDecl()
-		if err != nil {
-			return nil, err
-		}
-	} else {
-		p.consume(TokenSemicolon, "expect ';'")
+func (p *Parser) parseForStmt() *ASTNode {
+	if err := p.consume(TokenFor, "for"); err != nil {
+		panic(err)
 	}
-	var cond *ASTNode
-	if p.peek().Type != TokenSemicolon {
-		var err error
-		cond, err = p.parseExpr()
-		if err != nil {
-			return nil, err
-		}
+	if err := p.consume(TokenLParen, "("); err != nil {
+		panic(err)
 	}
-	p.consume(TokenSemicolon, "expect ';'")
-	var update *ASTNode
+	var init, cond, incr *ASTNode
+	if p.peek().Type != TokenSemicolon {
+		init = p.parseStmt()
+	}
+	if err := p.consume(TokenSemicolon, ";"); err != nil {
+		panic(err)
+	}
+	if p.peek().Type != TokenSemicolon {
+		cond = p.parseExpr()
+	}
+	if err := p.consume(TokenSemicolon, ";"); err != nil {
+		panic(err)
+	}
 	if p.peek().Type != TokenRParen {
-		var err error
-		// Parse update expression without expecting a semicolon
-		ident := p.consume(TokenIdentifier, "expect identifier")
-		var target *ASTNode
-		if p.peek().Type == TokenLBracket {
-			p.consume(TokenLBracket, "expect '['")
-			index, err := p.parseExpr()
-			if err != nil {
-				return nil, err
-			}
-			p.consume(TokenRBracket, "expect ']'")
-			target = &ASTNode{
-				Type:     NodeArrayAccess,
-				Children: []*ASTNode{{Type: NodeIdentifier, Value: ident.Literal, Token: ident}, index},
+		if p.peek().Type == TokenIdentifier {
+			ident := p.peek()
+			p.consume(TokenIdentifier, "")
+			if p.peek().Literal == "(" {
+				incr = p.parseFuncCallStmt(ident)
+			} else if p.peek().Literal == "[" {
+				incr = p.parseAssignStmt(ident)
+			} else if p.peek().Type == TokenInc || p.peek().Type == TokenDec {
+				incr = p.parseIncDecStmt(ident)
+			} else if p.peek().Literal == "=" {
+				incr = p.parseAssignStmt(ident)
+			} else {
+				// Handle standalone identifier as expression
+				expr := &ASTNode{Type: NodeIdentifier, Value: ident.Literal, Token: ident}
+				if err := p.consume(TokenSemicolon, ";"); err != nil {
+					panic(err)
+				}
+				incr = &ASTNode{Type: NodeExprStmt, Children: []*ASTNode{expr}, Token: ident}
 			}
 		} else {
-			target = &ASTNode{Type: NodeIdentifier, Value: ident.Literal, Token: ident}
-		}
-		p.consume(TokenEqual, "expect '='")
-		expr, err := p.parseExpr()
-		if err != nil {
-			return nil, err
-		}
-		update = &ASTNode{
-			Type:     NodeAssign,
-			Children: []*ASTNode{target, expr},
+			expr := p.parseExpr()
+			if err := p.consume(TokenSemicolon, ";"); err != nil {
+				panic(err)
+			}
+			incr = &ASTNode{Type: NodeExprStmt, Children: []*ASTNode{expr}, Token: expr.Token}
 		}
 	}
-	p.consume(TokenRParen, "expect ')'")
-	p.consume(TokenLBrace, "expect '{'")
-	body, err := p.parseStmtList()
-	if err != nil {
-		return nil, err
+	if err := p.consume(TokenRParen, ")"); err != nil {
+		panic(err)
 	}
-	p.consume(TokenRBrace, "expect '}'")
-
-	return &ASTNode{
-		Type:     NodeForStmt,
-		Children: []*ASTNode{init, cond, update, body},
-	}, nil
+	if err := p.consume(TokenLBrace, "{"); err != nil {
+		panic(err)
+	}
+	body := p.parseStmtList()
+	if err := p.consume(TokenRBrace, "}"); err != nil {
+		panic(err)
+	}
+	return &ASTNode{Type: NodeForStmt, Children: []*ASTNode{init, cond, incr, body}}
 }
 
 // parseReturnStmt parses a return statement
-func (p *Parser) parseReturnStmt() (*ASTNode, error) {
-	returnTok := p.consume(TokenReturn, "expect 'return'")
-	var expr *ASTNode
-	if p.peek().Type != TokenSemicolon {
-		var err error
-		expr, err = p.parseExpr()
-		if err != nil {
-			return nil, err
-		}
+func (p *Parser) parseReturnStmt() *ASTNode {
+	if err := p.consume(TokenReturn, "return"); err != nil {
+		panic(err)
 	}
-	p.consume(TokenSemicolon, "expect ';'")
-	return &ASTNode{
-		Type:     NodeReturnStmt,
-		Children: []*ASTNode{expr},
-		Token:    returnTok,
-	}, nil
+	node := &ASTNode{Type: NodeReturnStmt}
+	if p.peek().Type != TokenSemicolon {
+		expr := p.parseExpr()
+		node.Children = append(node.Children, expr)
+	}
+	if err := p.consume(TokenSemicolon, ";"); err != nil {
+		panic(err)
+	}
+	return node
 }
 
 // parsePrintStmt parses a print statement
-func (p *Parser) parsePrintStmt() (*ASTNode, error) {
-	p.consume(TokenPrint, "expect 'print'")
-	p.consume(TokenLParen, "expect '('")
-	expr, err := p.parseExpr()
-	if err != nil {
-		return nil, err
+func (p *Parser) parsePrintStmt() *ASTNode {
+	if err := p.consume(TokenPrint, "print"); err != nil {
+		panic(err)
 	}
-	p.consume(TokenRParen, "expect ')'")
-	p.consume(TokenSemicolon, "expect ';'")
-	return &ASTNode{
-		Type:     NodePrintStmt,
-		Children: []*ASTNode{expr},
-	}, nil
+	if err := p.consume(TokenLParen, "("); err != nil {
+		panic(err)
+	}
+	expr := p.parseExpr()
+	if err := p.consume(TokenRParen, ")"); err != nil {
+		panic(err)
+	}
+	if err := p.consume(TokenSemicolon, ";"); err != nil {
+		panic(err)
+	}
+	return &ASTNode{Type: NodePrintStmt, Children: []*ASTNode{expr}}
 }
 
-// parseAssign parses an assignment statement
-func (p *Parser) parseAssign() (*ASTNode, error) {
-	ident := p.consume(TokenIdentifier, "expect identifier")
-	var target *ASTNode
-	if p.peek().Type == TokenLBracket {
-		p.consume(TokenLBracket, "expect '['")
-		index, err := p.parseExpr()
-		if err != nil {
-			return nil, err
+// parseFuncCallStmt parses a function call statement
+func (p *Parser) parseFuncCallStmt(ident Token) *ASTNode {
+	node := &ASTNode{Type: NodeFuncCall, Value: ident.Literal, Token: ident}
+	if p.peek().Literal == "(" {
+		if err := p.consume(TokenLParen, "("); err != nil {
+			panic(err)
 		}
-		p.consume(TokenRBracket, "expect ']'")
-		target = &ASTNode{
-			Type:     NodeArrayAccess,
-			Children: []*ASTNode{{Type: NodeIdentifier, Value: ident.Literal, Token: ident}, index},
+		for p.peek().Type != TokenRParen {
+			expr := p.parseExpr()
+			node.Children = append(node.Children, expr)
+			if p.peek().Literal == "," {
+				p.consume(TokenComma, ",")
+			}
 		}
-	} else {
-		target = &ASTNode{Type: NodeIdentifier, Value: ident.Literal, Token: ident}
+		if err := p.consume(TokenRParen, ")"); err != nil {
+			panic(err)
+		}
 	}
-	p.consume(TokenEqual, "expect '='")
-	expr, err := p.parseExpr()
-	if err != nil {
-		return nil, err
+	if err := p.consume(TokenSemicolon, ";"); err != nil {
+		panic(err)
 	}
-	p.consume(TokenSemicolon, "expect ';'")
-	return &ASTNode{
-		Type:     NodeAssign,
-		Children: []*ASTNode{target, expr},
-	}, nil
+	return node
 }
 
 // parseExpr parses an expression
-func (p *Parser) parseExpr() (*ASTNode, error) {
-	return p.parseEquality()
+func (p *Parser) parseExpr() *ASTNode {
+	return p.parseBinaryExpr(0)
 }
 
-// parseEquality parses equality expressions
-func (p *Parser) parseEquality() (*ASTNode, error) {
-	expr, err := p.parseComparison()
-	if err != nil {
-		return nil, err
-	}
-	if p.peek().Type == TokenDoubleEqual {
-		op := p.consume(TokenDoubleEqual, "expect '=='")
-		right, err := p.parseComparison()
-		if err != nil {
-			return nil, err
+// parseBinaryExpr parses a binary expression
+func (p *Parser) parseBinaryExpr(precedence int) *ASTNode {
+	node := p.parsePrimary()
+	for {
+		op := p.peek()
+		opPrecedence := p.getPrecedence(op.Literal)
+		if (op.Type != TokenPlus && op.Type != TokenMinus && op.Type != TokenMultiply && op.Type != TokenDivide && op.Type != TokenDoubleEqual && op.Type != TokenLessThan) || opPrecedence <= precedence {
+			break
 		}
-		expr = &ASTNode{
-			Type:     NodeBinaryExpr,
-			Value:    op.Literal,
-			Children: []*ASTNode{expr, right},
-			Token:    op,
-		}
+		p.consume(op.Type, op.Literal)
+		rhs := p.parseBinaryExpr(opPrecedence)
+		node = &ASTNode{Type: NodeBinaryExpr, Value: op.Literal, Children: []*ASTNode{node, rhs}, Token: op}
 	}
-	return expr, nil
+	return node
 }
 
-// parseComparison parses comparison expressions
-func (p *Parser) parseComparison() (*ASTNode, error) {
-	expr, err := p.parseAdditive()
-	if err != nil {
-		return nil, err
-	}
-	if p.peek().Type == TokenLessThan {
-		op := p.consume(TokenLessThan, "expect '<'")
-		right, err := p.parseAdditive()
-		if err != nil {
-			return nil, err
-		}
-		expr = &ASTNode{
-			Type:     NodeBinaryExpr,
-			Value:    op.Literal,
-			Children: []*ASTNode{expr, right},
-			Token:    op,
-		}
-	}
-	return expr, nil
-}
-
-// parseAdditive parses additive expressions
-func (p *Parser) parseAdditive() (*ASTNode, error) {
-	expr, err := p.parseMultiplicative()
-	if err != nil {
-		return nil, err
-	}
-	for p.peek().Type == TokenPlus || p.peek().Type == TokenMinus {
-		op := p.advance()
-		right, err := p.parseMultiplicative()
-		if err != nil {
-			return nil, err
-		}
-		expr = &ASTNode{
-			Type:     NodeBinaryExpr,
-			Value:    op.Literal,
-			Children: []*ASTNode{expr, right},
-			Token:    op,
-		}
-	}
-	return expr, nil
-}
-
-// parseMultiplicative parses multiplicative expressions
-func (p *Parser) parseMultiplicative() (*ASTNode, error) {
-	expr, err := p.parseUnary()
-	if err != nil {
-		return nil, err
-	}
-	for p.peek().Type == TokenMultiply || p.peek().Type == TokenDivide {
-		op := p.advance()
-		right, err := p.parseUnary()
-		if err != nil {
-			return nil, err
-		}
-		expr = &ASTNode{
-			Type:     NodeBinaryExpr,
-			Value:    op.Literal,
-			Children: []*ASTNode{expr, right},
-			Token:    op,
-		}
-	}
-	return expr, nil
-}
-
-// parseUnary parses unary expressions
-func (p *Parser) parseUnary() (*ASTNode, error) {
-	if p.peek().Type == TokenBang {
-		op := p.consume(TokenBang, "expect '!'")
-		expr, err := p.parseUnary()
-		if err != nil {
-			return nil, err
-		}
-		return &ASTNode{
-			Type:     NodeUnaryExpr,
-			Value:    op.Literal,
-			Children: []*ASTNode{expr},
-			Token:    op,
-		}, nil
-	}
-	return p.parsePrimary()
-}
-
-// parsePrimary parses primary expressions
-func (p *Parser) parsePrimary() (*ASTNode, error) {
-	switch p.peek().Type {
-	case TokenNumber:
-		num := p.advance()
-		value, err := strconv.Atoi(num.Literal)
-		if err != nil {
-			return nil, fmt.Errorf("invalid number at line %d: %s", num.Line, num.Literal)
-		}
-		return &ASTNode{Type: NodeLiteral, Value: value, Token: num}, nil
-	case TokenString:
-		str := p.advance()
-		return &ASTNode{Type: NodeLiteral, Value: str.Literal, Token: str}, nil
-	case TokenTrue, TokenFalse:
-		boolTok := p.advance()
-		value := boolTok.Type == TokenTrue
-		return &ASTNode{Type: NodeLiteral, Value: value, Token: boolTok}, nil
-	case TokenIdentifier:
-		ident := p.advance()
-		if p.peek().Type == TokenLBracket {
-			p.consume(TokenLBracket, "expect '['")
-			index, err := p.parseExpr()
-			if err != nil {
-				return nil, err
+// parsePrimary parses a primary expression
+func (p *Parser) parsePrimary() *ASTNode {
+	if p.peek().Type == TokenNumber {
+		token := p.peek()
+		p.consume(TokenNumber, "")
+		value, _ := strconv.Atoi(token.Literal)
+		return &ASTNode{Type: NodeLiteral, Value: value, Token: token}
+	} else if p.peek().Type == TokenString {
+		token := p.peek()
+		p.consume(TokenString, "")
+		return &ASTNode{Type: NodeLiteral, Value: token.Literal, Token: token}
+	} else if p.peek().Type == TokenTrue || p.peek().Type == TokenFalse {
+		token := p.peek()
+		p.consume(token.Type, "")
+		value := token.Type == TokenTrue
+		return &ASTNode{Type: NodeLiteral, Value: value, Token: token}
+	} else if p.peek().Type == TokenIdentifier {
+		ident := p.peek()
+		p.consume(TokenIdentifier, "")
+		if p.peek().Literal == "(" {
+			node := &ASTNode{Type: NodeFuncCall, Value: ident.Literal, Token: ident}
+			p.consume(TokenLParen, "(")
+			for p.peek().Type != TokenRParen {
+				expr := p.parseExpr()
+				node.Children = append(node.Children, expr)
+				if p.peek().Literal == "," {
+					p.consume(TokenComma, ",")
+				}
 			}
-			p.consume(TokenRBracket, "expect ']'")
-			return &ASTNode{
-				Type:     NodeArrayAccess,
-				Children: []*ASTNode{{Type: NodeIdentifier, Value: ident.Literal, Token: ident}, index},
-			}, nil
+			p.consume(TokenRParen, ")")
+			return node
+		} else if p.peek().Literal == "[" {
+			p.consume(TokenLBracket, "[")
+			index := p.parseExpr()
+			p.consume(TokenRBracket, "]")
+			return &ASTNode{Type: NodeArrayAccess, Children: []*ASTNode{{Type: NodeIdentifier, Value: ident.Literal, Token: ident}, index}, Token: ident}
+		} else if p.peek().Literal == "." && p.peekNext().Literal == "length" {
+			p.consume(TokenDot, ".")
+			p.consume(TokenLength, "length")
+			return &ASTNode{Type: NodeArrayLength, Children: []*ASTNode{{Type: NodeIdentifier, Value: ident.Literal, Token: ident}}, Token: ident}
 		}
-		if p.peek().Type == TokenDot && p.peekN(1).Type == TokenLength {
-			p.consume(TokenDot, "expect '.'")
-			lengthTok := p.consume(TokenLength, "expect 'length'")
-			return &ASTNode{
-				Type:     NodeArrayLength,
-				Children: []*ASTNode{{Type: NodeIdentifier, Value: ident.Literal, Token: ident}},
-				Token:    lengthTok,
-			}, nil
-		}
-		return &ASTNode{Type: NodeIdentifier, Value: ident.Literal, Token: ident}, nil
-	case TokenLParen:
-		p.consume(TokenLParen, "expect '('")
-		expr, err := p.parseExpr()
-		if err != nil {
-			return nil, err
-		}
-		p.consume(TokenRParen, "expect ')'")
-		return expr, nil
-	default:
-		return nil, fmt.Errorf("unexpected token at line %d: %s", p.peek().Line, p.peek().Literal)
+		return &ASTNode{Type: NodeIdentifier, Value: ident.Literal, Token: ident}
+	} else if p.peek().Type == TokenLParen {
+		p.consume(TokenLParen, "(")
+		expr := p.parseExpr()
+		p.consume(TokenRParen, ")")
+		return expr
+	} else if p.peek().Type == TokenBang {
+		token := p.peek()
+		p.consume(TokenBang, "!")
+		expr := p.parsePrimary()
+		return &ASTNode{Type: NodeUnaryExpr, Value: "!", Children: []*ASTNode{expr}, Token: token}
 	}
+	panic(fmt.Errorf("unexpected token at line %d: %s", p.currentLine(), p.peek().Literal))
 }
 
 // parseArrayLiteral parses an array literal
-func (p *Parser) parseArrayLiteral() (*ASTNode, error) {
-	p.consume(TokenLBracket, "expect '['")
-	array := &ASTNode{Type: NodeArrayLiteral}
+func (p *Parser) parseArrayLiteral() *ASTNode {
+	node := &ASTNode{Type: NodeArrayLiteral}
+	if err := p.consume(TokenLBracket, "["); err != nil {
+		panic(err)
+	}
 	for p.peek().Type != TokenRBracket {
-		expr, err := p.parseExpr()
-		if err != nil {
-			return nil, err
+		expr := p.parseExpr()
+		node.Children = append(node.Children, expr)
+		if p.peek().Literal == "," {
+			p.consume(TokenComma, ",")
 		}
-		array.Children = append(array.Children, expr)
-		if p.peek().Type != TokenComma {
-			break
-		}
-		p.consume(TokenComma, "expect ','")
 	}
-	p.consume(TokenRBracket, "expect ']'")
-	return array, nil
-}
-
-// parseType parses a type specifier
-func (p *Parser) parseType() *ASTNode {
-	if p.peek().Type == TokenInt || p.peek().Type == TokenBool {
-		tok := p.advance()
-		return &ASTNode{Type: NodeLiteral, Value: tok.Literal, Token: tok}
+	if err := p.consume(TokenRBracket, "]"); err != nil {
+		panic(err)
 	}
-	panic(fmt.Sprintf("unexpected type token at line %d: %s", p.peek().Line, p.peek().Literal))
+	return node
 }
 
-// consume checks and advances if the token matches
-func (p *Parser) consume(tt TokenType, msg string) Token {
-	if p.peek().Type != tt {
-		panic(fmt.Sprintf("%s at line %d, found %s", msg, p.peek().Line, p.peek().Literal))
+// peekNext returns the next token
+func (p *Parser) peekNext() Token {
+	if p.current+1 >= len(p.tokens) {
+		return Token{Line: p.currentLine()}
 	}
-	return p.advance()
+	return p.tokens[p.current+1]
 }
 
-// advance moves to the next token
-func (p *Parser) advance() Token {
-	if !p.isAtEnd() {
-		p.current++
+// getPrecedence returns the precedence of an operator
+func (p *Parser) getPrecedence(op string) int {
+	switch op {
+	case "==", "<":
+		return 1
+	case "+", "-":
+		return 2
+	case "*", "/":
+		return 3
+	default:
+		return 0
 	}
-	return p.tokens[p.current-1]
-}
-
-// peek returns the current token without advancing
-func (p *Parser) peek() Token {
-	return p.tokens[p.current]
-}
-
-// peekN peeks n tokens ahead
-func (p *Parser) peekN(n int) Token {
-	if p.current+n < len(p.tokens) {
-		return p.tokens[p.current+n]
-	}
-	return Token{Type: TokenEOF}
-}
-
-// isAtEnd checks if parsing is complete
-func (p *Parser) isAtEnd() bool {
-	return p.current >= len(p.tokens) || p.peek().Type == TokenEOF
 }

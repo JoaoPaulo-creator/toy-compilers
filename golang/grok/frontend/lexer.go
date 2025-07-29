@@ -11,6 +11,8 @@ type TokenType int
 const (
 	// Keywords
 	TokenFunc TokenType = iota
+	TokenInc  TokenType = iota
+	TokenDec
 	TokenInt
 	TokenBool
 	TokenIf
@@ -143,9 +145,19 @@ func (l *Lexer) nextToken() Token {
 		l.advance()
 		return Token{Type: TokenEqual, Literal: "=", Line: line, Column: column}
 	case ch == '+':
+		if l.peek() == '+' {
+			l.advance()
+			l.advance()
+			return Token{Type: TokenInc, Literal: "++", Line: line, Column: column}
+		}
 		l.advance()
 		return Token{Type: TokenPlus, Literal: "+", Line: line, Column: column}
 	case ch == '-':
+		if l.peek() == '-' {
+			l.advance()
+			l.advance()
+			return Token{Type: TokenDec, Literal: "--", Line: line, Column: column}
+		}
 		l.advance()
 		return Token{Type: TokenMinus, Literal: "-", Line: line, Column: column}
 	case ch == '*':
