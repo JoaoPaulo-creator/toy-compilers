@@ -224,9 +224,11 @@ func (p *Parser) parseAssignStmt(ident Token) *ASTNode {
 	}
 	expr := p.parseExpr()
 	node.Children = append(node.Children, target, expr)
+	fmt.Printf("Before semicolon in assign, token: %v\n", p.peek())
 	if err := p.consume(TokenSemicolon, ";"); err != nil {
 		panic(err)
 	}
+	fmt.Printf("After semicolon in assign, token: %v\n", p.peek())
 	return node
 }
 
@@ -323,46 +325,33 @@ func (p *Parser) parseForStmt() *ASTNode {
 		panic(err)
 	}
 	var init, cond, incr *ASTNode
+	// Parse initialization clause
 	if p.peek().Type != TokenSemicolon {
 		init = p.parseStmt()
-	}
-	if err := p.consume(TokenSemicolon, ";"); err != nil {
-		panic(err)
-	}
-	if p.peek().Type != TokenSemicolon {
-		cond = p.parseExpr()
-	}
-	if err := p.consume(TokenSemicolon, ";"); err != nil {
-		panic(err)
-	}
-	if p.peek().Type != TokenRParen {
-		if p.peek().Type == TokenIdentifier {
-			ident := p.peek()
-			p.consume(TokenIdentifier, "")
-			if p.peek().Literal == "(" {
-				incr = p.parseFuncCallStmt(ident)
-			} else if p.peek().Literal == "[" {
-				incr = p.parseAssignStmt(ident)
-			} else if p.peek().Type == TokenInc || p.peek().Type == TokenDec {
-				incr = p.parseIncDecStmt(ident)
-			} else if p.peek().Literal == "=" {
-				incr = p.parseAssignStmt(ident)
-			} else {
-				// Handle standalone identifier as expression
-				expr := &ASTNode{Type: NodeIdentifier, Value: ident.Literal, Token: ident}
-				if err := p.consume(TokenSemicolon, ";"); err != nil {
-					panic(err)
-				}
-				incr = &ASTNode{Type: NodeExprStmt, Children: []*ASTNode{expr}, Token: ident}
-			}
-		} else {
-			expr := p.parseExpr()
-			if err := p.consume(TokenSemicolon, ";"); err != nil {
-				panic(err)
-			}
-			incr = &ASTNode{Type: NodeExprStmt, Children: []*ASTNode{expr}, Token: expr.Token}
+	} else {
+		if err := p.consume(TokenSemicolon, ";"); err != nil {
+			panic(err)
 		}
 	}
+	fmt.Printf("After init, token: %v\n", p.peek())
+	// Parse condition clause
+	if p.peek().Type != TokenSemicolon {
+		cond = p.parseExpr()
+		if err := p.consume(TokenSemicolon, ";"); err != nil {
+			panic(err)
+		}
+	} else {
+		if err := p.consume(TokenSemicolon, ";"); err != nil {
+			panic(err)
+		}
+	}
+	fmt.Printf("After cond, token: %v\n", p.peek())
+	// Parse update clause
+	if p.peek().Type != TokenRParen {
+		fmt.Printf("Before incr, token: %v\n", p.peek())
+		incr = p.parseStmt()
+	}
+	// Consume closing parenthesis
 	if err := p.consume(TokenRParen, ")"); err != nil {
 		panic(err)
 	}
