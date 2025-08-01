@@ -104,14 +104,22 @@ func (p *Parser) parseFunction() *ASTNode {
 		panic(err)
 	}
 	// Parse parameters
-	for p.peek().Type == TokenInt || p.peek().Type == TokenBool {
-		typeToken := p.peek()
-		if err := p.consume(typeToken.Type, ""); err != nil {
-			panic(err)
-		}
-		paramName := p.peek()
-		if err := p.consume(TokenIdentifier, ""); err != nil {
-			panic(err)
+	for p.peek().Type != TokenRParen && p.peek().Type != TokenEOF {
+		var paramType, paramName Token
+		if p.peek().Type == TokenInt || p.peek().Type == TokenBool {
+			paramType = p.peek()
+			if err := p.consume(paramType.Type, ""); err != nil {
+				panic(err)
+			}
+			paramName = p.peek()
+			if err := p.consume(TokenIdentifier, ""); err != nil {
+				panic(err)
+			}
+		} else {
+			paramName = p.peek()
+			if err := p.consume(TokenIdentifier, ""); err != nil {
+				panic(err)
+			}
 		}
 		node.Children = append(node.Children, &ASTNode{Type: NodeIdentifier, Value: paramName.Literal, Token: paramName})
 		if p.peek().Literal == "," {
@@ -136,7 +144,7 @@ func (p *Parser) parseFunction() *ASTNode {
 func (p *Parser) parseStmtList() *ASTNode {
 	node := &ASTNode{Type: NodeStmtList}
 	for p.peek().Type != TokenRBrace && p.peek().Type != TokenEOF {
-		stmt := p.parseStmt()
+		stmt := p.parseStmt(true)
 		if stmt != nil {
 			node.Children = append(node.Children, stmt)
 		} else {
@@ -147,9 +155,9 @@ func (p *Parser) parseStmtList() *ASTNode {
 }
 
 // parseStmt parses a single statement
-func (p *Parser) parseStmt() *ASTNode {
+func (p *Parser) parseStmt(consumeSemi bool) *ASTNode {
 	if p.peek().Type == TokenInt || p.peek().Type == TokenBool {
-		return p.parseVarDecl()
+		return p.parseVarDecl(consumeSemi)
 	} else if p.peek().Type == TokenIf {
 		return p.parseIfStmt()
 	} else if p.peek().Type == TokenWhile {
@@ -166,18 +174,18 @@ func (p *Parser) parseStmt() *ASTNode {
 		if p.peek().Literal == "(" {
 			return p.parseFuncCallStmt(ident)
 		} else if p.peek().Literal == "[" || p.peek().Literal == "=" {
-			return p.parseAssignStmt(ident)
+			return p.parseAssignStmt(ident, consumeSemi)
 		} else if p.peek().Type == TokenInc || p.peek().Type == TokenDec {
-			return p.parseIncDecStmt(ident)
+			return p.parseIncDecStmt(ident, consumeSemi)
 		} else {
-			return p.parseFuncCallStmt(ident) // Handle standalone function calls
+			return p.parseFuncCallStmt(ident)
 		}
 	}
 	return nil
 }
 
 // parseVarDecl parses a variable declaration
-func (p *Parser) parseVarDecl() *ASTNode {
+func (p *Parser) parseVarDecl(consumeSemi bool) *ASTNode {
 	keyword := p.peek()
 	if err := p.consume(keyword.Type, ""); err != nil {
 		panic(err)
@@ -201,14 +209,18 @@ func (p *Parser) parseVarDecl() *ASTNode {
 			node.Children = append(node.Children, &ASTNode{Type: NodeIdentifier, Value: nameToken.Literal, Token: nameToken}, expr)
 		}
 	}
-	if err := p.consume(TokenSemicolon, ";"); err != nil {
-		panic(err)
+
+	if consumeSemi {
+		if err := p.consume(TokenSemicolon, ";"); err != nil {
+			panic(err)
+		}
 	}
+
 	return node
 }
 
 // parseAssignStmt parses an assignment statement
-func (p *Parser) parseAssignStmt(ident Token) *ASTNode {
+func (p *Parser) parseAssignStmt(ident Token, consumeSemi bool) *ASTNode {
 	node := &ASTNode{Type: NodeAssign, Token: ident}
 	target := &ASTNode{Type: NodeIdentifier, Value: ident.Literal, Token: ident}
 	if p.peek().Literal == "[" {
@@ -225,23 +237,21 @@ func (p *Parser) parseAssignStmt(ident Token) *ASTNode {
 	expr := p.parseExpr()
 	node.Children = append(node.Children, target, expr)
 	fmt.Printf("Before semicolon in assign, token: %v\n", p.peek())
-	if err := p.consume(TokenSemicolon, ";"); err != nil {
-		panic(err)
+	if consumeSemi {
+		if err := p.consume(TokenSemicolon, ";"); err != nil {
+			panic(err)
+		}
+		fmt.Printf("After semicolon in assign, token: %v\n", p.peek())
 	}
-	fmt.Printf("After semicolon in assign, token: %v\n", p.peek())
 	return node
 }
 
 // parseIncDecStmt parses an increment or decrement statement
-func (p *Parser) parseIncDecStmt(ident Token) *ASTNode {
+func (p *Parser) parseIncDecStmt(ident Token, consumeSemi bool) *ASTNode {
 	op := p.peek()
 	if err := p.consume(op.Type, op.Literal); err != nil {
 		panic(err)
 	}
-	if err := p.consume(TokenSemicolon, ";"); err != nil {
-		panic(err)
-	}
-	// Convert j++ or j-- to j = j + 1 or j = j - 1
 	opValue := ""
 	if op.Type == TokenInc {
 		opValue = "+"
@@ -251,8 +261,14 @@ func (p *Parser) parseIncDecStmt(ident Token) *ASTNode {
 	one := &ASTNode{Type: NodeLiteral, Value: 1, Token: Token{Type: TokenNumber, Literal: "1"}}
 	rhs := &ASTNode{Type: NodeBinaryExpr, Value: opValue, Children: []*ASTNode{
 		{Type: NodeIdentifier, Value: ident.Literal, Token: ident}, one}, Token: op}
-	return &ASTNode{Type: NodeAssign, Children: []*ASTNode{
+	node := &ASTNode{Type: NodeAssign, Children: []*ASTNode{
 		{Type: NodeIdentifier, Value: ident.Literal, Token: ident}, rhs}, Token: ident}
+	if consumeSemi {
+		if err := p.consume(TokenSemicolon, ";"); err != nil {
+			panic(err)
+		}
+	}
+	return node
 }
 
 // parseIfStmt parses an if statement
@@ -327,7 +343,7 @@ func (p *Parser) parseForStmt() *ASTNode {
 	var init, cond, incr *ASTNode
 	// Parse initialization clause
 	if p.peek().Type != TokenSemicolon {
-		init = p.parseStmt()
+		init = p.parseStmt(true) // Consume semicolon
 	} else {
 		if err := p.consume(TokenSemicolon, ";"); err != nil {
 			panic(err)
@@ -349,7 +365,8 @@ func (p *Parser) parseForStmt() *ASTNode {
 	// Parse update clause
 	if p.peek().Type != TokenRParen {
 		fmt.Printf("Before incr, token: %v\n", p.peek())
-		incr = p.parseStmt()
+		incr = p.parseStmt(false) // Do not consume semicolon
+		fmt.Printf("After incr, token: %v\n", p.peek())
 	}
 	// Consume closing parenthesis
 	if err := p.consume(TokenRParen, ")"); err != nil {
