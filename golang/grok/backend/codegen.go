@@ -65,7 +65,6 @@ func (cg *CodeGen) genFunction(fn *frontend.ASTNode) error {
 		varName := param.Value.(string)
 		cg.spOffset -= 8
 		cg.symbols[varName] = fmt.Sprintf("[rbp%d]", cg.spOffset)
-		// Move parameters from registers/stack
 		if i < 6 {
 			regs := []string{"rdi", "rsi", "rdx", "rcx", "r8", "r9"}
 			cg.output.WriteString(fmt.Sprintf("mov %s, %s\n", cg.symbols[varName], regs[i]))
@@ -121,9 +120,33 @@ func (cg *CodeGen) genStmt(stmt *frontend.ASTNode) error {
 		return cg.genReturnStmt(stmt)
 	case frontend.NodePrintStmt:
 		return cg.genPrintStmt(stmt)
+	case frontend.NodeFuncCall:
+		// Generate code for function call
+		funcName := stmt.Value.(string)
+		// Align stack to 16 bytes before call
+		cg.output.WriteString("sub rsp, 8\n")
+		// Generate arguments (if any)
+		for _, arg := range stmt.Children {
+			if err := cg.genExpr(arg); err != nil {
+				return err
+			}
+			cg.output.WriteString("push rax\n")
+		}
+		// Move arguments to registers (up to 6 for x86_64)
+		regs := []string{"rdi", "rsi", "rdx", "rcx", "r8", "r9"}
+		for i := len(stmt.Children) - 1; i >= 0; i-- {
+			if i < len(regs) {
+				cg.output.WriteString(fmt.Sprintf("pop %s\n", regs[i]))
+			}
+		}
+		// Call function
+		cg.output.WriteString(fmt.Sprintf("call %s\n", funcName))
+		// Restore stack
+		cg.output.WriteString("add rsp, 8\n")
 	default:
 		return fmt.Errorf("unknown statement type: %s", stmt.Type)
 	}
+	return nil
 }
 
 // genVarDecl generates code for a variable declaration
@@ -341,7 +364,6 @@ func (cg *CodeGen) genExpr(expr *frontend.ASTNode) error {
 				cg.output.WriteString("mov rax, 0\n")
 			}
 		case string:
-			// Store string in data section
 			strLabel := cg.newLabel()
 			cg.output.WriteString(fmt.Sprintf("section .data\n%s: db \"%s\", 0\nsection .text\n", strLabel, v))
 			cg.output.WriteString(fmt.Sprintf("lea rax, [rel %s]\n", strLabel))
@@ -371,8 +393,39 @@ func (cg *CodeGen) genExpr(expr *frontend.ASTNode) error {
 		var offset int
 		fmt.Sscanf(arrOffsetStr, "[rbp%d]", &offset)
 		cg.output.WriteString(fmt.Sprintf("mov rax, [rbp%d-8]\n", offset))
+	case frontend.NodeFuncCall:
+		funcName := expr.Value.(string)
+		cg.output.WriteString("sub rsp, 8\n")
+		for _, arg := range expr.Children {
+			if err := cg.genExpr(arg); err != nil {
+				return err
+			}
+			cg.output.WriteString("push rax\n")
+		}
+		regs := []string{"rdi", "rsi", "rdx", "rcx", "r8", "r9"}
+		for i := len(expr.Children) - 1; i >= 0; i-- {
+			if i < len(regs) {
+				cg.output.WriteString(fmt.Sprintf("pop %s\n", regs[i]))
+			}
+		}
+		cg.output.WriteString(fmt.Sprintf("call %s\n", funcName))
+		cg.output.WriteString("add rsp, 8\n")
 	case frontend.NodeArrayLiteral:
-		return fmt.Errorf("array literal not expected in expression context")
+		// Allocate space for array elements on stack
+		arraySize := len(expr.Children)
+		cg.spOffset -= 8 * (arraySize + 1) // +1 for length
+		// Store length
+		cg.output.WriteString(fmt.Sprintf("mov rax, %d\n", arraySize))
+		cg.output.WriteString(fmt.Sprintf("mov [rbp%d], rax\n", cg.spOffset))
+		// Store elements
+		for i, elem := range expr.Children {
+			if err := cg.genExpr(elem); err != nil {
+				return err
+			}
+			cg.output.WriteString(fmt.Sprintf("mov [rbp%d+%d], rax\n", cg.spOffset, (i+1)*8))
+		}
+		// Return pointer to array (base address)
+		cg.output.WriteString(fmt.Sprintf("lea rax, [rbp%d]\n", cg.spOffset))
 	default:
 		return fmt.Errorf("unknown expression type: %s", expr.Type)
 	}

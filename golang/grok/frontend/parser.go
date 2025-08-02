@@ -176,7 +176,10 @@ func (p *Parser) parseStmt(consumeSemi bool) *ASTNode {
 		} else if p.peek().Literal == "[" || p.peek().Literal == "=" {
 			return p.parseAssignStmt(ident, consumeSemi)
 		} else if p.peek().Type == TokenInc || p.peek().Type == TokenDec {
-			return p.parseIncDecStmt(ident, consumeSemi)
+			// Allow optional semicolon in block contexts
+			nextToken := p.peekNext()
+			semiRequired := consumeSemi && !(nextToken.Type == TokenRBrace || nextToken.Type == TokenEOF)
+			return p.parseIncDecStmt(ident, semiRequired)
 		} else {
 			return p.parseFuncCallStmt(ident)
 		}
@@ -264,9 +267,11 @@ func (p *Parser) parseIncDecStmt(ident Token, consumeSemi bool) *ASTNode {
 	node := &ASTNode{Type: NodeAssign, Children: []*ASTNode{
 		{Type: NodeIdentifier, Value: ident.Literal, Token: ident}, rhs}, Token: ident}
 	if consumeSemi {
+		fmt.Printf("Before semicolon in inc/dec, token: %v\n", p.peek())
 		if err := p.consume(TokenSemicolon, ";"); err != nil {
 			panic(err)
 		}
+		fmt.Printf("After semicolon in inc/dec, token: %v\n", p.peek())
 	}
 	return node
 }
@@ -513,6 +518,8 @@ func (p *Parser) parsePrimary() *ASTNode {
 		p.consume(TokenBang, "!")
 		expr := p.parsePrimary()
 		return &ASTNode{Type: NodeUnaryExpr, Value: "!", Children: []*ASTNode{expr}, Token: token}
+	} else if p.peek().Type == TokenLBracket {
+		return p.parseArrayLiteral()
 	}
 	panic(fmt.Errorf("unexpected token at line %d: %s", p.currentLine(), p.peek().Literal))
 }

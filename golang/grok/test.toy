@@ -23,7 +23,7 @@ func main() {
     arr[1] = 999;
     print(arr[1]);
 
-    for (int j = 0; j < 3; j = j + 1) {
+    for (int j = 0; j < 3; j++) {
         print(j);
     }
 
@@ -36,6 +36,41 @@ func main() {
     }
 
     foo();
+
+    int arr[] = [100, 200, 300];
+    arr[1] = 999;
+    print(arr[1]);
+
+    for (int j = 0; j < 3; j = j + 1) {
+        print(j);
+    }
+
+    int newArr[] = [2, 7, 4, 6, 5];
+    int result[] = twoSum(newArr, 9);
+    print ("resultado");
+    print(result[0]);
+    print(result[1]);
+
+}
+
+
+
+
+func twoSum(arr, target) {
+        int left = 0;
+        int right = arr.length - 1;
+        while (left < right) {
+                int sum = arr[left] + arr[right];
+                if (sum == target) {
+                        return [arr[left], arr[right]];
+                } else if (sum < target) {
+                        left++;
+                } else {
+                        right--;
+                }
+        }
+
+        return [0, 0];
 }
 
 func foo() {
