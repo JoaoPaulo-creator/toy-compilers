@@ -2,7 +2,6 @@ package main
 
 import (
 	"fmt"
-	"io/ioutil"
 	"os"
 	"toy-compiler/backend"
 	"toy-compiler/frontend"
@@ -16,7 +15,7 @@ func main() {
 
 	// Read source file
 	sourceFile := os.Args[1]
-	source, err := ioutil.ReadFile(sourceFile)
+	source, err := os.ReadFile(sourceFile)
 	if err != nil {
 		fmt.Printf("Error reading file: %v\n", err)
 		os.Exit(1)
@@ -48,7 +47,7 @@ func main() {
 
 	// Output assembly to file
 	outputFile := "output.asm"
-	err = ioutil.WriteFile(outputFile, []byte(assembly), 0644)
+	err = os.WriteFile(outputFile, []byte(assembly), 0644)
 	if err != nil {
 		fmt.Printf("Error writing output: %v\n", err)
 		os.Exit(1)

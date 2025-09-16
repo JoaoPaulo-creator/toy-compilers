@@ -3,7 +3,7 @@ module Parser where
 import Lexer
 
 -- AST data types
-data Type = TInt | TBool | TArray Type deriving (Show, Eq)
+data Type = TInt | TBool | TArray Type | TVoid deriving (Show, Eq)
 
 data Expr
   = EIntLit Int
@@ -26,6 +26,7 @@ data Stmt
   | SPrint Expr
   | SReturn Expr
   | SExpr Expr
+  | SDeclArray Type String Expr -- Added support for array declarations
   deriving (Show, Eq)
 
 data Func = Func String [(Type, String)] Type [Stmt] deriving (Show, Eq)
@@ -53,7 +54,9 @@ parseFuncs ts = do
 parseFunc :: [Token] -> Either String (Func, [Token])
 parseFunc (TKeyword "func" : TIdent name : TLParen : ts) = do
   (params, ts') <- parseParams ts
-  (retType, ts'') <- parseType ts'
+  (retType, ts'') <- case ts' of
+    TLBrace : _ -> Right (TVoid, ts') -- No return type, assume void
+    _ -> parseType ts' -- Parse explicit return type
   ts''' <- expect TLBrace ts''
   (stmts, ts'''') <- parseStmts ts'''
   ts''''' <- expect TRBrace ts''''
@@ -76,9 +79,9 @@ parseParams ts = do
   return (param : params, ts'''')
 
 parseType :: [Token] -> Either String (Type, [Token])
+parseType (TKeyword "int" : TLBracket : TRBracket : ts) = Right (TArray TInt, ts)
 parseType (TKeyword "int" : ts) = Right (TInt, ts)
 parseType (TKeyword "bool" : ts) = Right (TBool, ts)
-parseType (TKeyword "int" : TLBracket : TRBracket : ts) = Right (TArray TInt, ts)
 parseType _ = Left "Expected type"
 
 parseStmts :: [Token] -> Either String ([Stmt], [Token])
@@ -97,6 +100,10 @@ parseStmt (TKeyword "bool" : TIdent name : TOperator "=" : ts) = do
   (expr, ts') <- parseExpr ts
   ts'' <- expect TSemicolon ts'
   return (SDecl TBool name expr, ts'')
+parseStmt (TKeyword "int" : TLBracket : TRBracket : TIdent name : TOperator "=" : ts) = do
+  (expr, ts') <- parseExpr ts
+  ts'' <- expect TSemicolon ts'
+  return (SDeclArray (TArray TInt) name expr, ts'')
 parseStmt (TIdent name : TOperator "=" : ts) = do
   (expr, ts') <- parseExpr ts
   ts'' <- expect TSemicolon ts'
